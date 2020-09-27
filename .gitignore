@@ -1,5 +1,6 @@
 # Mac OS bullshit
 *.DS_Store
+*.bsz
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
