@@ -1,6 +1,7 @@
 # Mac OS bullshit
 *.DS_Store
 *.bsz
+project2/rec-amz-Office-Products.edges
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
