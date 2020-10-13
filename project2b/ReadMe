@@ -1,1 +1,9 @@
-
+This is an analysis of a crime network, which runs over 5 files, which I joined in the program.
+$ ls -l
+total 8781
+-rw-r--r-- 1 ShovanBiswas 197121   11289 Aug 31 16:26 ent.moreno_crime_crime.person.name
+-rw-r--r-- 1 ShovanBiswas 197121    2487 Aug 31 16:26 ent.moreno_crime_crime.person.sex
+-rw-r--r-- 1 ShovanBiswas 197121     573 Aug 31 16:26 meta.moreno_crime_crime
+-rw-r--r-- 1 ShovanBiswas 197121   14136 Aug 31 16:26 out.moreno_crime_crime
+-rw-r--r-- 1 ShovanBiswas 197121 8936735 Oct 13 16:33 Project2.ipynb
+-rw-r--r-- 1 ShovanBiswas 197121   13013 Aug 31 16:26 rel.moreno_crime_crime.person.role
