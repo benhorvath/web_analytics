@@ -1,0 +1,258 @@
+---
+title: "data620finalv2"
+author: "Randall Thompson"
+date: "12/12/2020"
+output: html_document
+---
+```{r}
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(lubridate)  # easy dates
+library(stringr)    # easy regex
+library(textstem)   # stemming, lemmatization
+library(tidytext)# easy TF-IDF
+library(tidyverse)
+library(janitor)
+library(topicmodels)
+library(tm)
+```
+```{r}
+fake <- read_csv('Fake.csv') %>%
+  mutate(y='fake')
+
+real <- read_csv('True.csv') %>%
+  mutate(y='real')
+
+# rename date to dt to keep R happy
+df <- rbind(fake, real) %>%
+  rename(dt = 'date') %>%
+  mutate(dt = parse_date_time(dt, '%B %d, $Y'))
+```
+```{r}
+prop.table(table(df$y, df$subject), 1)
+```
+```{r}
+df$twitter_handle <- str_detect(df$text, '(?<!\\w)@[\\w+]{1,15}\\b')
+prop.table(table(df$y, df$twitter_handle), 1)
+```
+```{r}
+
+df %>%
+  group_by(dt, y) %>%
+  summarise(n=n_distinct(title)) %>%
+  ggplot(aes(x=dt, y=n, colour=y)) + geom_line()
+```
+```{r}
+
+df <- df %>%
+  mutate(title = str_remove(title, '^[^\\-]*\\-\\s+'),
+         title = str_remove(tolower(title), 'reuters'),
+         title = str_remove(title, '[0-9]+'),
+         title = str_remove(title, '[:punct:]+'),
+         title = str_trim(title, side = "both"), 
+         title = str_squish(title)) #%>% 
+df <- df %>% 
+  filter(nchar(title) != 0)
+```
+
+```{r}
+#df$title <- df$title[raw.sum!=0,]
+
+df %>% 
+  count(title)
+
+s <- SimpleCorpus(VectorSource(unlist(df$title[1:40000])))
+
+
+
+test <- DocumentTermMatrix(s)
+
+rowTotals <- apply(test, 1, sum)
+test2   <- test[rowTotals> 0, ] 
+test3 <- LDA(test2, k = 5, control = list(seed = 1234))
+
+topics <- tidy(test3, matrix = "beta")
+
+ap_top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ap_top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+```
+
+
+```{r}
+tokens <- df %>%
+  select(y, title) %>%
+  unique() %>% 
+  unnest_tokens(word, title, drop=FALSE) %>% 
+  filter(!word %in% stop_words$word)
+
+
+tokens2 <- df %>%
+  select(y, title) %>%
+  unique() %>% 
+  mutate(title2 = title) %>% 
+  unnest_tokens(output = bigram, input = title2, token = "ngrams", n = 2) %>% 
+  separate(bigram, c("word1", "word2"), sep = " ") %>% 
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  unite(word, word1, word2, sep = " ") %>% 
+  filter(!word == "NA NA")
+
+tokens3 <- df %>%
+  select(y, title) %>%
+  unique() %>% 
+  mutate(title2 = title) %>% 
+  unnest_tokens(output = trigram, input = title2, token = "ngrams", n = 3) %>% 
+  separate(trigram, c("word1", "word2", "word3"), sep = " ") %>% 
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  filter(!word3 %in% stop_words$word) %>%
+  unite(word, word1, word2, word3, sep = " ") 
+
+words <- rbind(tokens, tokens2, tokens3)
+
+top1 <- tokens %>% 
+  count(word) %>% 
+  arrange(desc(n)) %>% 
+  top_n(1000)
+
+top2 <- tokens2 %>% 
+  count(word) %>% 
+  arrange(desc(n)) %>% 
+  top_n(1000)
+
+top3 <- tokens3 %>% 
+  count(word) %>% 
+  arrange(desc(n)) %>% 
+  top_n(1000)
+
+top_words <- rbind(top1, top2, top3)
+
+words <- words %>% 
+  filter(!word %in% top_words$word)
+words %>% 
+  count(title)
+```
+
+```{r}
+stems <- words %>%
+  mutate(stemmed = stem_words(word))
+
+head(stems)
+```
+```{r}
+lemmas <- stems %>%
+  mutate(lemma = lemmatize_words(stemmed))
+
+head(lemmas)
+```
+```{r}
+token_count <- lemmas %>%
+  count(title, y, lemma, sort=TRUE) %>%
+  ungroup()
+head(token_count)
+```
+```{r}
+total_words <- token_count %>%
+  group_by(title, y) %>%
+  summarise(total = sum(n), .groups='keep')
+head(total_words)
+```
+```{r}
+
+token_count <- token_count %>%
+  bind_tf_idf(lemma, title, n)
+
+# Remove tokens with less than 10 instances
+tc <- token_count %>%
+  group_by(lemma) %>%
+  summarise(n=sum(n), .groups='keep') %>%
+  filter(n > 10)
+
+token_count <- token_count %>%
+  filter(lemma %in% tc$lemma)
+
+head(token_count)
+```
+```{r}
+X <- token_count %>%
+  select(title, y, lemma, tf_idf) %>% 
+  filter(lemma != 'title',
+         lemma != 'y') %>%  # remove because I'm already using 'title' and 'y'
+  #unique() %>%
+  tidyr::spread(lemma, tf_idf) %>%
+  janitor::clean_names() %>%  # VERY HANDY FUNCTION!
+  replace(is.na(.), 0) %>%
+  select(!contains('_2'))
+```
+
+```{r}
+xx <- sample(X, 200)
+library(tictoc)
+tic()
+low_variance <- nearZeroVar(X, uniqueCut=.08)
+toc()
+```
+```{r}
+
+xx3 <- X[,-low_variance]
+ncol(xx3)
+```
+```{r}
+ctrl <- trainControl(method='repeatedcv',
+                     number=2,  # number of folds for each run: change this for final run
+                     repeats=1,  # number of times to repeat CV: change this for final run
+                     classProbs=TRUE,
+                     savePredictions=TRUE,
+                     summaryFunction = twoClassSummary)
+
+# good guesses for mtry are sqrt(p) and log2(p)
+tunegrid <- expand.grid(mtry=c(9, 20),
+                        splitrule=c('gini'),
+                        min.node.size=c(1, 5))
+ 
+set.seed(1804)
+m0 <- train(y ~ .,
+            data=xx3[,2:100],   # REMOVE THIS SUBSETTING FOR REAL MODEL
+            tuneGrid=tunegrid,
+            method='ranger',
+            num.trees=1000,
+            importance='impurity',
+            trControl=ctrl,
+            metric='ROC')
+
+lm_model <- lm(y~., xx3)
+
+print(m0)
+
+xx3[1:3, 1:5]
+```
+```{r}
+head(m0$resample)
+
+# Averaged cross-validation scores, most representative of performance
+mean(m0$resample$ROC); mean(m0$resample$Sens); mean(m0$resample$Spec)
+```
+```{r}
+varImp(m0)
+
+```
+```{r}
+Y <- X %>%
+  mutate(yy = if_else(y == 'fake', TRUE, FALSE))  # has to be a factor for Hmisc
+
+library(Hmisc)
+ggplot(Y, aes(x=and, y=yy )) +
+  histSpikeg(yy ~ and, lowess=TRUE, data=Y)
+```
+
