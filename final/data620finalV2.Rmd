@@ -56,13 +56,13 @@ df <- df %>%
   filter(nchar(title) != 0)
 ```
 
-```{r}
+```{r, eval = FALSE}
 #df$title <- df$title[raw.sum!=0,]
 
 df %>% 
   count(title)
 
-s <- SimpleCorpus(VectorSource(unlist(df$title[1:40000])))
+s <- SimpleCorpus(VectorSource(unlist(df$title[1:4000])))
 
 
 
@@ -117,56 +117,55 @@ tokens3 <- df %>%
   filter(!word1 %in% stop_words$word) %>%
   filter(!word2 %in% stop_words$word) %>% 
   filter(!word3 %in% stop_words$word) %>%
-  unite(word, word1, word2, word3, sep = " ") 
+  unite(word, word1, word2, word3, sep = " ") %>% 
+  filter(!word == "NA NA NA")
 
 words <- rbind(tokens, tokens2, tokens3)
-
-top1 <- tokens %>% 
-  count(word) %>% 
-  arrange(desc(n)) %>% 
-  top_n(1000)
-
-top2 <- tokens2 %>% 
-  count(word) %>% 
-  arrange(desc(n)) %>% 
-  top_n(1000)
-
-top3 <- tokens3 %>% 
-  count(word) %>% 
-  arrange(desc(n)) %>% 
-  top_n(1000)
-
-top_words <- rbind(top1, top2, top3)
-
-words <- words %>% 
-  filter(!word %in% top_words$word)
-words %>% 
-  count(title)
+#
+#top1 <- tokens %>% 
+#  count(word) %>% 
+#  arrange(desc(n)) %>% 
+#  top_n(1000)
+#
+#top2 <- tokens2 %>% 
+#  count(word) %>% 
+#  arrange(desc(n)) %>% 
+#  top_n(1000)
+#
+#top3 <- tokens3 %>% 
+#  count(word) %>% 
+#  arrange(desc(n)) %>% 
+#  top_n(1000)
+#
+#top_words <- rbind(top1, top2, top3)
+#
+#words <- words %>% 
+#  filter(!word %in% top_words$word)
 ```
 
 ```{r}
 stems <- words %>%
   mutate(stemmed = stem_words(word))
 
-head(stems)
+#head(stems)
 ```
 ```{r}
 lemmas <- stems %>%
   mutate(lemma = lemmatize_words(stemmed))
 
-head(lemmas)
+#head(lemmas)
 ```
 ```{r}
 token_count <- lemmas %>%
   count(title, y, lemma, sort=TRUE) %>%
   ungroup()
-head(token_count)
+#head(token_count)
 ```
 ```{r}
 total_words <- token_count %>%
   group_by(title, y) %>%
   summarise(total = sum(n), .groups='keep')
-head(total_words)
+#head(total_words)
 ```
 ```{r}
 
@@ -222,14 +221,27 @@ tunegrid <- expand.grid(mtry=c(9, 20),
                         min.node.size=c(1, 5))
  
 set.seed(1804)
-m0 <- train(y ~ .,
-            data=xx3[,2:100],   # REMOVE THIS SUBSETTING FOR REAL MODEL
-            tuneGrid=tunegrid,
+
+
+m0 <- train(y_c ~ .,
+            data=xx3,   # REMOVE THIS SUBSETTING FOR REAL MODEL
             method='ranger',
-            num.trees=1000,
+            num.trees=100,
             importance='impurity',
-            trControl=ctrl,
             metric='ROC')
+
+#str(xx3)
+
+#xx3$y <- as.factor(xx3$y)
+
+#xx3$'break' <- as.numeric(xx3$'break')
+
+colnames(xx3) <- paste(colnames(xx3), "_c", sep = "")
+
+rf_model <- randomForest::randomForest(y_c~., data = xx3, 
+                       importance = TRUE,
+                       ntree = 1000)
+
 
 lm_model <- lm(y~., xx3)
 
@@ -237,6 +249,104 @@ print(m0)
 
 xx3[1:3, 1:5]
 ```
+```{r}
+nnetGrid <- expand.grid(decay = c(0, 0.01, .1),
+                        size = c(1:10))
+# get the maximum number of hidden units
+maxSize <- max(nnetGrid$size)
+# compute the maximum number of parameters
+# there are M(p+1)+M+1 parameters in total
+numWts <- 1*(maxSize * (length(xx3) + 1) + maxSize + 1)
+ctrl <- trainControl(method = "cv",  # corss-validation
+                     number = 10  # 10 folds
+                     #classProbs = TRUE, # report class probability
+                     #summaryFunction = twoClassSummary # return AUC
+)
+nnetTune <- train(y_c~., data = xx3,
+                   method = "nnet", # train neural network using `nnet` package 
+                   tuneGrid = nnetGrid, # tuning grid
+                   trControl = ctrl, # process customization set before
+                   preProc = c("center", "scale"), # standardize data
+                   trace = FALSE,  # hide the training trace
+                   MaxNWts = numWts,  # maximum number of weight
+                   maxit = 500 # maximum iteration
+)
+predictions_NNModel_2 <- nnetTune %>% predict(xx3)
+
+```
+```{r}
+NNModel_1 <- avNNet(y~., data = xx3,
+                  #trainingData$x, trainingData$y,
+                  size = 5,
+                  decay = 0.01,
+                  repeats = 5,
+                  linout = TRUE,
+                  trace = FALSE,
+                  maxit = 500,
+                  MaxNWts = 5 * (ncol(xx3) + 1) + 5 + 1)
+#summary(NNModel_1)
+# Make MARS predictions
+predictions_NNModel_1 <- NNModel_1 %>% predict(xx3)
+# Model MARS performance metrics
+predictions_NNModel_1_Acc <- data.frame(
+  Model = "Neural Network avNNet",
+  RMSE = caret::RMSE(predictions_NNModel_1, xx3$y),
+  Rsquare = caret::R2(predictions_NNModel_1, xx3$y)
+)
+```
+
+```{r}
+tic()
+knnModel <- train(y~., data = xx3,
+                  method = "knn",
+                  preProc = c("center", "scale"),
+                  tuneLength = 10)
+#knnModel
+tc <- trainControl(method = "cv",
+                           number = 5,
+                           classProbs = T)
+svmModel <- train(y~., data = xx3,
+                    method = "svmRadial",
+                    preProcess = c("BoxCox","center", "scale"),
+                    trControl = tc,
+                    tuneLength = 9)
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+marsTuned <- train(y~., data = xx3,
+                   method = "earth",
+                   tuneGrid = marsGrid,
+                   trControl = trainControl(method = "cv"))
+cat("All 3 non-linear regression models took ") 
+toc()
+cat("to train.\n")
+
+knnModel_predictions <- knnModel %>% predict(xx3)
+# Model performance metrics
+knn_Accuracy <- data.frame(
+  Model = "k-Nearest Neighbors",
+  RMSE = caret::RMSE(knnModel_predictions,xx3$y),
+  Rsquare = caret::R2(knnModel_predictions,xx3$y))
+predictions_svm <- svmModel %>% predict(xx3)
+# Model SVM performance metrics
+SMV_Acc <- data.frame(
+  Model = "Support Vector Machine",
+  RMSE = caret::RMSE(predictions_svm, xx3$y),
+  Rsquare = caret::R2(predictions_svm, xx3$y)
+)
+#summary(marsTuned)
+# Make MARS predictions
+predictions_mars_tuned <- marsTuned %>% predict(xx3)
+# Model MARS performance metrics
+MARS_Acc_tuned <- data.frame(
+  Model = "MARS Tuned",
+  RMSE = caret::RMSE(predictions_mars_tuned, xx3$PH),
+  Rsquare = caret::R2(predictions_mars_tuned, xx3$PH)
+)
+names(MARS_Acc_tuned)[names(MARS_Acc_tuned) == 'y'] <- "Rsquare"
+rbind(knn_Accuracy,SMV_Acc,MARS_Acc_tuned)
+```
+
+
+
 ```{r}
 head(m0$resample)
 
