@@ -18,10 +18,10 @@ library(topicmodels)
 library(tm)
 ```
 ```{r}
-fake <- read_csv('Fake.csv') %>%
+fake <- read_csv('./data/Fake.csv') %>%
   mutate(y='fake')
 
-real <- read_csv('True.csv') %>%
+real <- read_csv('./data/True.csv') %>%
   mutate(y='real')
 
 # rename date to dt to keep R happy
@@ -72,7 +72,7 @@ rowTotals <- apply(test, 1, sum)
 test2   <- test[rowTotals> 0, ] 
 test3 <- LDA(test2, k = 5, control = list(seed = 1234))
 
-topics <- tidy(test3, matrix = "beta")
+topics <- tidy(test, matrix = "beta")
 
 ap_top_terms <- topics %>%
   group_by(topic) %>%
